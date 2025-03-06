@@ -9,7 +9,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.text.Text;
 import javafx.stage.Stage;
-import org.zero.dis1.model.Trip;
+import org.zero.dis1.entity.Trip;
 import org.zero.dis1.model.TripRepository;
 import org.zero.dis1.repository.JdbcTripRepository;
 import org.zero.dis1.repository.VertxTripRepository;
@@ -23,6 +23,7 @@ import java.util.function.Consumer;
 public class HelloApplication extends Application {
     static double width = 650;
     static double height = 500;
+    static int updateTrip = 5;
 
     @Override
     public void start(Stage stage) throws IOException, SQLException {
@@ -37,14 +38,15 @@ public class HelloApplication extends Application {
         retrieveWithJdbc.setText("Retrieve with JDBC");
         retrieveWithJdbc.setOnMouseClicked(event -> {
             TripRepository repository = new JdbcTripRepository();
-            repository.getTrip(textField.getText(), tripConsumer(table, System.nanoTime()));
+            repository.getTripById(updateTrip, seatsUpdateConsumer1(repository));
         });
 
         Button retrieveWithVertx = new Button();
         retrieveWithVertx.setText("Retrieve with Vertx");
         retrieveWithVertx.setOnMouseClicked(event -> {
+
             TripRepository repository = new VertxTripRepository();
-            repository.getTrip(textField.getText(), tripConsumer(table, System.nanoTime()));
+            repository.startTransaction(runTransaction(repository));
         });
 
         req.getChildren().addAll(textField, retrieveWithJdbc, retrieveWithVertx);
@@ -59,7 +61,99 @@ public class HelloApplication extends Application {
         stage.show();
     }
 
-    private Consumer<List<Trip>> tripConsumer(VBox root, Long start) {
+    private Runnable runTransaction(TripRepository repository) {
+        return () -> {
+            repository.getTripById(updateTrip, seatsUpdateConsumer1(repository));
+        };
+    }
+
+    private Consumer<Trip> seatsUpdateConsumer1(TripRepository repository) {
+        return value -> {
+            System.out.println(value);
+            if (value.getSeatsAvailable() <= 0) {
+                System.out.println("Seats update 1 -> failed");
+                return;
+            }
+
+            System.out.println("Seats update 1 -> success");
+            repository.decreaseTripAvailableSeatsById(updateTrip, seatsUpdateConsumer2(repository));
+        };
+    }
+
+
+    private Consumer<Boolean> seatsUpdateConsumer2(TripRepository repository) {
+        return value -> {
+            if (!value) {
+                System.out.println("Seats update 2 -> failed");
+                repository.rollback();
+                return;
+            }
+
+            System.out.println("Seats update 2 -> success");
+            repository.getTripById(updateTrip, seatsUpdateConsumer3(repository));
+        };
+    }
+
+    private Consumer<Trip> seatsUpdateConsumer3(TripRepository repository) {
+        return value -> {
+            System.out.println(value);
+            if (value.getSeatsAvailable() <= 0) {
+                System.out.println("Seats update 3 -> failed");
+                repository.rollback();
+                return;
+            }
+
+            System.out.println("Seats update 3 -> success");
+            repository.decreaseTripAvailableSeatsById(updateTrip, seatsUpdateConsumer4(repository));
+        };
+    }
+
+    private Consumer<Boolean> seatsUpdateConsumer4(TripRepository repository) {
+        return value -> {
+            if (!value) {
+                System.out.println("Seats update 4 -> failed");
+                repository.rollback();
+                return;
+            }
+
+            System.out.println("Seats update 4 -> success");
+            repository.commit();
+        };
+    }
+
+    private Consumer<Trip> tripConsumer(VBox root, Long start) {
+        return trip -> {
+            var end = System.nanoTime();
+
+            Text text = new Text();
+            text.setText("Completed in -> " + ((end - start)/1_000_000) + "ms");
+
+            Text errorText = new Text();
+            errorText.setText("Something went wrong.");
+
+            if (trip == null) {
+                Platform.runLater(() -> {
+                    root.getChildren().clear();
+                    root.getChildren().addAll(text, errorText);
+                });
+
+                return;
+            }
+
+            var table = new Table<Trip>(List.of(trip));
+            table.setHeight(height);
+            table.setWidth(width);
+
+
+
+            Platform.runLater(() -> {
+                root.getChildren().clear();
+                root.getChildren().addAll(text, table.getTable());
+            });
+        };
+    }
+
+    private Consumer<List<Trip>> tripsConsumer(VBox root, Long start) {
         return trips -> {
             var end = System.nanoTime();
 

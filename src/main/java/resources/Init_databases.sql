@@ -6,9 +6,11 @@ CREATE TABLE users
 (
     id       uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     username character varying(24) NOT NULL,
-    price    double precision      NOT NULL
+    balance    double precision      NOT NULL
 );
 
+INSERT INTO "public"."users"("username", "balance") VALUES('danyazero', 2600);
+INSERT INTO "public"."users"("username", "balance") VALUES('shevchuk', 3900);
 
 /*
 ================= trip_database ================

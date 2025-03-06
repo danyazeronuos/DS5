@@ -1,6 +1,6 @@
 package org.zero.dis1.mapper;
 
-import org.zero.dis1.model.Trip;
+import org.zero.dis1.entity.Trip;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;

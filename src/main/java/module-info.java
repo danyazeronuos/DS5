@@ -11,4 +11,5 @@ module org.zero.dis1 {
     opens org.zero.dis1 to javafx.fxml;
     opens org.zero.dis1.model to javafx.base;
     exports org.zero.dis1;
+    opens org.zero.dis1.entity to javafx.base;
 }

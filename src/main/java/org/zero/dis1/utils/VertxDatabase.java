@@ -30,6 +30,7 @@ public class VertxDatabase implements Database {
 
         PoolOptions poolOptions = new PoolOptions().setMaxSize(5);
         Pool client = Pool.pool(connectOptions, poolOptions);
+
         connections.put(databaseName, client);
     }
 
