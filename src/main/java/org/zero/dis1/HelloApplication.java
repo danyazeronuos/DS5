@@ -9,10 +9,13 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.text.Text;
 import javafx.stage.Stage;
+import org.zero.dis1.entity.Reserved;
 import org.zero.dis1.entity.Trip;
+import org.zero.dis1.entity.User;
+import org.zero.dis1.model.ReservedRepository;
 import org.zero.dis1.model.TripRepository;
-import org.zero.dis1.repository.JdbcTripRepository;
-import org.zero.dis1.repository.VertxTripRepository;
+import org.zero.dis1.model.UserRepository;
+import org.zero.dis1.repository.*;
 import org.zero.dis1.utils.Table;
 
 import java.io.IOException;
@@ -24,6 +27,7 @@ public class HelloApplication extends Application {
     static double width = 650;
     static double height = 500;
     static int updateTrip = 5;
+    static int user = 1;
 
     @Override
     public void start(Stage stage) throws IOException, SQLException {
@@ -38,7 +42,9 @@ public class HelloApplication extends Application {
         retrieveWithJdbc.setText("Retrieve with JDBC");
         retrieveWithJdbc.setOnMouseClicked(event -> {
             TripRepository repository = new JdbcTripRepository();
-            repository.getTripById(updateTrip, seatsUpdateConsumer1(repository));
+            UserRepository userRepository = new JdbcUserRepository();
+            ReservedRepository reservedRepository = new JdbcReservedRepository();
+            repository.getTripById(updateTrip, seatsAvailabilityCheck(repository, userRepository, reservedRepository));
         });
 
         Button retrieveWithVertx = new Button();
@@ -46,7 +52,9 @@ public class HelloApplication extends Application {
         retrieveWithVertx.setOnMouseClicked(event -> {
 
             TripRepository repository = new VertxTripRepository();
-            repository.startTransaction(runTransaction(repository));
+            UserRepository userRepository = new VertxUserRepository();
+            ReservedRepository reservedRepository = new VertxReservedRepository();
+            repository.startTransaction(runTripTransaction(repository, userRepository, reservedRepository));
         });
 
         req.getChildren().addAll(textField, retrieveWithJdbc, retrieveWithVertx);
@@ -61,63 +69,90 @@ public class HelloApplication extends Application {
         stage.show();
     }
 
-    private Runnable runTransaction(TripRepository repository) {
+    private Runnable runTripTransaction(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository) {
         return () -> {
-            repository.getTripById(updateTrip, seatsUpdateConsumer1(repository));
+            userRepository.startTransaction(runUserTransaction(repository, userRepository, reservedRepository));
         };
     }
 
-    private Consumer<Trip> seatsUpdateConsumer1(TripRepository repository) {
+    private Runnable runUserTransaction(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository) {
+        return () -> {
+            repository.getTripById(updateTrip, seatsAvailabilityCheck(repository, userRepository, reservedRepository));
+        };
+    }
+
+    private Consumer<Trip> seatsAvailabilityCheck(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository) {
+        return value -> {
+            if (value.getSeatsAvailable() <= 0) {
+                System.out.println("Seats check -> failed");
+                return;
+            }
+
+            System.out.println("Seats check -> success");
+            userRepository.findUserById(user, checkBalanceConsumer1(repository, userRepository, reservedRepository, value.getPrice()));
+        };
+    }
+
+    private Consumer<User> checkBalanceConsumer1(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository, Double price) {
         return value -> {
             System.out.println(value);
-            if (value.getSeatsAvailable() <= 0) {
-                System.out.println("Seats update 1 -> failed");
+            if (value.getBalance() < price) {
+                System.out.println("Balance check -> failed");
                 return;
             }
 
-            System.out.println("Seats update 1 -> success");
-            repository.decreaseTripAvailableSeatsById(updateTrip, seatsUpdateConsumer2(repository));
+            System.out.println("Balance check -> success");
+            value.setBalance(value.getBalance() - price);
+            userRepository.updateUser(value, updateUserBalance(repository, userRepository, reservedRepository));
         };
     }
 
+    private Consumer<Boolean> updateUserBalance(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository) {
 
-    private Consumer<Boolean> seatsUpdateConsumer2(TripRepository repository) {
+        return (value) -> {
+            if (!value) {
+                System.out.println("Balance update -> failed");
+                repository.rollback();
+                userRepository.rollback();
+                return;
+            }
+
+            System.out.println("Balance update -> success");
+            repository.decreaseTripAvailableSeatsById(updateTrip, reserveTrip(repository, userRepository, reservedRepository));
+        };
+    }
+
+    private Consumer<Boolean> reserveTrip(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository) {
+        return (value) -> {
+            if (!value) {
+                System.out.println("Reserve -> failed");
+                repository.rollback();
+                userRepository.rollback();
+                return;
+            }
+
+            var entity = Reserved.builder()
+                    .userId(user)
+                    .tripId(updateTrip)
+                    .build();
+
+            System.out.println("Reserve -> success");
+            reservedRepository.save(entity, seatsUpdateConsumer4(repository, userRepository));
+        };
+    }
+
+    private Consumer<Boolean> seatsUpdateConsumer4(TripRepository repository, UserRepository userRepository) {
         return value -> {
             if (!value) {
-                System.out.println("Seats update 2 -> failed");
+                System.out.println("Reservation of trip -> failed");
                 repository.rollback();
+                userRepository.rollback();
                 return;
             }
 
-            System.out.println("Seats update 2 -> success");
-            repository.getTripById(updateTrip, seatsUpdateConsumer3(repository));
-        };
-    }
-
-    private Consumer<Trip> seatsUpdateConsumer3(TripRepository repository) {
-        return value -> {
-            System.out.println(value);
-            if (value.getSeatsAvailable() <= 0) {
-                System.out.println("Seats update 3 -> failed");
-                repository.rollback();
-                return;
-            }
-
-            System.out.println("Seats update 3 -> success");
-            repository.decreaseTripAvailableSeatsById(updateTrip, seatsUpdateConsumer4(repository));
-        };
-    }
-
-    private Consumer<Boolean> seatsUpdateConsumer4(TripRepository repository) {
-        return value -> {
-            if (!value) {
-                System.out.println("Seats update 4 -> failed");
-                repository.rollback();
-                return;
-            }
-
-            System.out.println("Seats update 4 -> success");
+            System.out.println("Reservation of trip -> success");
             repository.commit();
+            userRepository.commit();
         };
     }
 
@@ -126,7 +161,7 @@ public class HelloApplication extends Application {
             var end = System.nanoTime();
 
             Text text = new Text();
-            text.setText("Completed in -> " + ((end - start)/1_000_000) + "ms");
+            text.setText("Completed in -> " + ((end - start) / 1_000_000) + "ms");
 
             Text errorText = new Text();
             errorText.setText("Something went wrong.");
@@ -145,7 +180,6 @@ public class HelloApplication extends Application {
             table.setWidth(width);
 
 
-
             Platform.runLater(() -> {
                 root.getChildren().clear();
                 root.getChildren().addAll(text, table.getTable());
@@ -158,7 +192,7 @@ public class HelloApplication extends Application {
             var end = System.nanoTime();
 
             Text text = new Text();
-            text.setText("Completed in -> " + ((end - start)/1_000_000) + "ms");
+            text.setText("Completed in -> " + ((end - start) / 1_000_000) + "ms");
 
             Text errorText = new Text();
             errorText.setText("Something went wrong.");
@@ -175,7 +209,6 @@ public class HelloApplication extends Application {
             var table = new Table<Trip>(trips);
             table.setHeight(height);
             table.setWidth(width);
-
 
 
             Platform.runLater(() -> {

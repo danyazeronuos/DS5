@@ -30,9 +30,13 @@ public class VertxTripRepository implements TripRepository {
             return;
         }
 
-        var request = "rollback";
+        var request = "rollback transaction;";
 
-        tripConnection.get().query(request).execute();
+        tripConnection.get().query(request).execute(ar -> {
+            if (ar.succeeded()) {
+                System.out.println("Transaction rolled back");
+            }
+        });
     }
 
     @Override
@@ -44,14 +48,17 @@ public class VertxTripRepository implements TripRepository {
             return;
         }
 
-        var request = "commit";
+        var request = "commit transaction;";
 
-        tripConnection.get().query(request).execute();
+        tripConnection.get().query(request).execute(ar -> {
+            if (ar.succeeded()) {
+                System.out.println("Successfully committed transaction");
+            }
+        });
     }
 
     @Override
     public void getTripById(Integer id, Consumer<Trip> consumer) {
-        var request = "select * from trip where id = $1";
 
         var tripConnection = db.getConnectionByName(DatabaseEnum.TRIP_DATABASE.get());
 
@@ -59,6 +66,7 @@ public class VertxTripRepository implements TripRepository {
             System.out.println("Trip connection not found");
             return;
         }
+        var request = "select * from trip where id = $1";
 
         tripConnection.get().preparedQuery(request)
                 .execute(Tuple.of(id), ar -> {
@@ -138,6 +146,12 @@ public class VertxTripRepository implements TripRepository {
             System.out.println("Trip connection not found");
             return;
         }
+
+/*
+        tripConnection.get().withTransaction(client -> {
+            client.begin().andThen()
+        })
+*/
 
         tripConnection.get().query("start transaction").execute(ar -> {
             if (ar.succeeded()) {
