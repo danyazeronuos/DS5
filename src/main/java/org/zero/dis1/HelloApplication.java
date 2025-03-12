@@ -4,6 +4,7 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -36,6 +37,15 @@ public class HelloApplication extends Application {
 
         updateTables(table, 0L);
 
+        TextField userId = new TextField();
+        userId.setPromptText("User ID");
+
+        TextField tripId = new TextField();
+        tripId.setPromptText("Trip ID");
+
+        CheckBox commit = new CheckBox("Commit");
+        commit.setSelected(true);
+
         Button update = new Button("Update");
         update.setOnMouseClicked(event -> {
             updateTables(table, 0L);
@@ -45,7 +55,7 @@ public class HelloApplication extends Application {
         retrieveWithJdbc.setText("Retrieve with JDBC");
         retrieveWithJdbc.setOnMouseClicked(event -> {
             var tripService = new TripService();
-            var spentTime = tripService.reserveTripJdbc(updateTrip, user);
+            var spentTime = tripService.reserveTripJdbc(Integer.parseInt(tripId.getText()), Integer.parseInt(userId.getText()), commit.isSelected());
             updateTables(table, spentTime);
         });
 
@@ -53,11 +63,11 @@ public class HelloApplication extends Application {
         retrieveWithVertx.setText("Retrieve with Vertx");
         retrieveWithVertx.setOnMouseClicked(event -> {
             var tripService = new TripService();
-            var spentTime = tripService.reserveTripVertx(updateTrip, user);
-            updateTables(table, spentTime);
+            tripService.reserveTripVertx(Integer.parseInt(tripId.getText()), Integer.parseInt(userId.getText()), commit.isSelected()).andThen(spentTime -> updateTables(table, spentTime.result()));
+
         });
 
-        req.getChildren().addAll(retrieveWithJdbc, retrieveWithVertx, update);
+        req.getChildren().addAll(userId, tripId, commit, retrieveWithJdbc, retrieveWithVertx, update);
         req.setSpacing(10);
 
         root.getChildren().addAll(req, table);
@@ -74,7 +84,7 @@ public class HelloApplication extends Application {
         var userRepository = new JdbcUserRepository();
         var trips = tripRepository.getTrip("select * from trip");
         var users = userRepository.getUsers("select * from users");
-        drawTables(trips, users, table, 0L);
+        drawTables(trips, users, table, spent);
     }
 
 

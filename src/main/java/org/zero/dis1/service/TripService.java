@@ -1,5 +1,7 @@
 package org.zero.dis1.service;
 
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Transaction;
 import org.zero.dis1.entity.Reserved;
@@ -14,7 +16,7 @@ import java.util.function.Consumer;
 
 public class TripService {
 
-    public Long reserveTripJdbc(Integer tripId, Integer userId) {
+    public Long reserveTripJdbc(Integer tripId, Integer userId, Boolean commit) {
         var tripRepository = new JdbcTripRepository();
         var userRepository = new JdbcUserRepository();
         var reservedRepository = new JdbcReservedRepository();
@@ -65,6 +67,12 @@ public class TripService {
             return System.nanoTime() - start;
         }
 
+        if (!commit) {
+            tripRepository.rollback();
+            userRepository.rollback();
+            return System.nanoTime() - start;
+        }
+
         System.out.println("Commit changes");
         tripRepository.commit();
         userRepository.commit();
@@ -72,27 +80,30 @@ public class TripService {
         return System.nanoTime() - start;
     }
 
-    public Long reserveTripVertx(Integer tripId, Integer userId) {
+    public Future<Long> reserveTripVertx(Integer tripId, Integer userId, Boolean commit) {
         var tripRepository = new VertxTripRepository();
         var userRepository = new VertxUserRepository();
         var reservedRepository = new VertxReservedRepository();
 
+        var start = System.nanoTime();
+        Promise<Long> promise = Promise.promise();
+
         var connectionPool = new HashMap<String, SqlConnection>();
         var transactionPool = new HashMap<String, Transaction>();
 
-        var start = System.nanoTime();
-
         Consumer<Boolean> changes = bool -> {
-            if (!bool) {
+            if (!bool || !commit) {
                 System.out.println("Changes will be rolled back");
                 transactionPool.get("trip").rollback();
                 transactionPool.get("user").rollback();
+                promise.complete(System.nanoTime() - start);
                 return;
             }
 
             System.out.println("Changes will be committed");
             transactionPool.get("trip").commit().onSuccess(v -> System.out.println("Committed")).onFailure(e -> System.out.println("Error -> " + e.getMessage()));
             transactionPool.get("user").commit().onSuccess(v -> System.out.println("Committed")).onFailure(e -> System.out.println("Error -> " + e.getMessage()));
+            promise.complete(System.nanoTime() - start);
         };
 
         Consumer<Boolean> saveReservation = bool -> {
@@ -100,6 +111,7 @@ public class TripService {
             if (!bool) {
                 transactionPool.get("trip").rollback();
                 transactionPool.get("user").rollback();
+                promise.complete(System.nanoTime() - start);
                 return;
             }
 
@@ -117,6 +129,7 @@ public class TripService {
                 System.out.println("update seats - rollback");
                 transactionPool.get("trip").rollback();
                 transactionPool.get("user").rollback();
+                promise.complete(System.nanoTime() - start);
                 return;
             }
 
@@ -125,11 +138,16 @@ public class TripService {
 
         Consumer<Trip> checkSeats = trip -> {
             System.out.println("Check seats");
-            if (trip.getSeatsAvailable() <= 0) return;
+            if (trip.getSeatsAvailable() <= 0) {
+                promise.complete(System.nanoTime() - start);
+
+                return;
+            }
 
             userRepository.findUserById(userId, user -> {
                 System.out.println("Check balance");
                 if (user.getBalance() < trip.getPrice()) {
+                    promise.complete(System.nanoTime() - start);
                     return;
                 }
 
@@ -155,8 +173,6 @@ public class TripService {
 
         tripRepository.startTransaction(startUserTransaction);
 
-        var end = System.nanoTime();
-
-        return end - start;
+        return promise.future();
     }
 }
