@@ -12,10 +12,9 @@ import javafx.stage.Stage;
 import org.zero.dis1.entity.Reserved;
 import org.zero.dis1.entity.Trip;
 import org.zero.dis1.entity.User;
-import org.zero.dis1.model.ReservedRepository;
-import org.zero.dis1.model.TripRepository;
-import org.zero.dis1.model.UserRepository;
-import org.zero.dis1.repository.*;
+import org.zero.dis1.repository.JdbcTripRepository;
+import org.zero.dis1.repository.JdbcUserRepository;
+import org.zero.dis1.service.TripService;
 import org.zero.dis1.utils.Table;
 
 import java.io.IOException;
@@ -35,29 +34,30 @@ public class HelloApplication extends Application {
         HBox req = new HBox();
         VBox table = new VBox();
 
-        TextField textField = new TextField();
-        textField.setText("select * from trip");
+        updateTables(table, 0L);
+
+        Button update = new Button("Update");
+        update.setOnMouseClicked(event -> {
+            updateTables(table, 0L);
+        });
 
         Button retrieveWithJdbc = new Button();
         retrieveWithJdbc.setText("Retrieve with JDBC");
         retrieveWithJdbc.setOnMouseClicked(event -> {
-            TripRepository repository = new JdbcTripRepository();
-            UserRepository userRepository = new JdbcUserRepository();
-            ReservedRepository reservedRepository = new JdbcReservedRepository();
-            repository.getTripById(updateTrip, seatsAvailabilityCheck(repository, userRepository, reservedRepository));
+            var tripService = new TripService();
+            var spentTime = tripService.reserveTripJdbc(updateTrip, user);
+            updateTables(table, spentTime);
         });
 
         Button retrieveWithVertx = new Button();
         retrieveWithVertx.setText("Retrieve with Vertx");
         retrieveWithVertx.setOnMouseClicked(event -> {
-
-            TripRepository repository = new VertxTripRepository();
-            UserRepository userRepository = new VertxUserRepository();
-            ReservedRepository reservedRepository = new VertxReservedRepository();
-            repository.startTransaction(runTripTransaction(repository, userRepository, reservedRepository));
+            var tripService = new TripService();
+            var spentTime = tripService.reserveTripVertx(updateTrip, user);
+            updateTables(table, spentTime);
         });
 
-        req.getChildren().addAll(textField, retrieveWithJdbc, retrieveWithVertx);
+        req.getChildren().addAll(retrieveWithJdbc, retrieveWithVertx, update);
         req.setSpacing(10);
 
         root.getChildren().addAll(req, table);
@@ -69,153 +69,44 @@ public class HelloApplication extends Application {
         stage.show();
     }
 
-    private Runnable runTripTransaction(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository) {
-        return () -> {
-            userRepository.startTransaction(runUserTransaction(repository, userRepository, reservedRepository));
-        };
+    private void updateTables(VBox table, Long spent) {
+        var tripRepository = new JdbcTripRepository();
+        var userRepository = new JdbcUserRepository();
+        var trips = tripRepository.getTrip("select * from trip");
+        var users = userRepository.getUsers("select * from users");
+        drawTables(trips, users, table, 0L);
     }
 
-    private Runnable runUserTransaction(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository) {
-        return () -> {
-            repository.getTripById(updateTrip, seatsAvailabilityCheck(repository, userRepository, reservedRepository));
-        };
-    }
 
-    private Consumer<Trip> seatsAvailabilityCheck(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository) {
-        return value -> {
-            if (value.getSeatsAvailable() <= 0) {
-                System.out.println("Seats check -> failed");
-                return;
-            }
+    private void drawTables(List<Trip> trips, List<User> users, VBox root, Long spent) {
 
-            System.out.println("Seats check -> success");
-            userRepository.findUserById(user, checkBalanceConsumer1(repository, userRepository, reservedRepository, value.getPrice()));
-        };
-    }
+        Text text = new Text();
+        text.setText("Completed in -> " + (spent / 1_000_000) + "ms");
 
-    private Consumer<User> checkBalanceConsumer1(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository, Double price) {
-        return value -> {
-            System.out.println(value);
-            if (value.getBalance() < price) {
-                System.out.println("Balance check -> failed");
-                return;
-            }
+        Text errorText = new Text();
+        errorText.setText("Something went wrong.");
 
-            System.out.println("Balance check -> success");
-            value.setBalance(value.getBalance() - price);
-            userRepository.updateUser(value, updateUserBalance(repository, userRepository, reservedRepository));
-        };
-    }
-
-    private Consumer<Boolean> updateUserBalance(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository) {
-
-        return (value) -> {
-            if (!value) {
-                System.out.println("Balance update -> failed");
-                repository.rollback();
-                userRepository.rollback();
-                return;
-            }
-
-            System.out.println("Balance update -> success");
-            repository.decreaseTripAvailableSeatsById(updateTrip, reserveTrip(repository, userRepository, reservedRepository));
-        };
-    }
-
-    private Consumer<Boolean> reserveTrip(TripRepository repository, UserRepository userRepository, ReservedRepository reservedRepository) {
-        return (value) -> {
-            if (!value) {
-                System.out.println("Reserve -> failed");
-                repository.rollback();
-                userRepository.rollback();
-                return;
-            }
-
-            var entity = Reserved.builder()
-                    .userId(user)
-                    .tripId(updateTrip)
-                    .build();
-
-            System.out.println("Reserve -> success");
-            reservedRepository.save(entity, seatsUpdateConsumer4(repository, userRepository));
-        };
-    }
-
-    private Consumer<Boolean> seatsUpdateConsumer4(TripRepository repository, UserRepository userRepository) {
-        return value -> {
-            if (!value) {
-                System.out.println("Reservation of trip -> failed");
-                repository.rollback();
-                userRepository.rollback();
-                return;
-            }
-
-            System.out.println("Reservation of trip -> success");
-            repository.commit();
-            userRepository.commit();
-        };
-    }
-
-    private Consumer<Trip> tripConsumer(VBox root, Long start) {
-        return trip -> {
-            var end = System.nanoTime();
-
-            Text text = new Text();
-            text.setText("Completed in -> " + ((end - start) / 1_000_000) + "ms");
-
-            Text errorText = new Text();
-            errorText.setText("Something went wrong.");
-
-            if (trip == null) {
-                Platform.runLater(() -> {
-                    root.getChildren().clear();
-                    root.getChildren().addAll(text, errorText);
-                });
-
-                return;
-            }
-
-            var table = new Table<Trip>(List.of(trip));
-            table.setHeight(height);
-            table.setWidth(width);
-
-
+        if (trips.isEmpty() || users.isEmpty()) {
             Platform.runLater(() -> {
                 root.getChildren().clear();
-                root.getChildren().addAll(text, table.getTable());
+                root.getChildren().addAll(text, errorText);
             });
-        };
-    }
 
-    private Consumer<List<Trip>> tripsConsumer(VBox root, Long start) {
-        return trips -> {
-            var end = System.nanoTime();
+            return;
+        }
 
-            Text text = new Text();
-            text.setText("Completed in -> " + ((end - start) / 1_000_000) + "ms");
+        var table = new Table<Trip>(trips);
+        table.setHeight(height);
+        table.setWidth(width);
 
-            Text errorText = new Text();
-            errorText.setText("Something went wrong.");
+        var table2 = new Table<>(users);
+        table2.setHeight(height);
+        table2.setWidth(width);
 
-            if (trips.size() == 0) {
-                Platform.runLater(() -> {
-                    root.getChildren().clear();
-                    root.getChildren().addAll(text, errorText);
-                });
-
-                return;
-            }
-
-            var table = new Table<Trip>(trips);
-            table.setHeight(height);
-            table.setWidth(width);
-
-
-            Platform.runLater(() -> {
-                root.getChildren().clear();
-                root.getChildren().addAll(text, table.getTable());
-            });
-        };
+        Platform.runLater(() -> {
+            root.getChildren().clear();
+            root.getChildren().addAll(text, table.getTable(), table2.getTable());
+        });
     }
 
     public static void main(String[] args) {
